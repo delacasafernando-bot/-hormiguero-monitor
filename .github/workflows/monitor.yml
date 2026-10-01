@@ -2,21 +2,29 @@ name: Monitor El Hormiguero
 
 on:
   schedule:
-    - cron: '*/5 * * * *'
+    - cron: "*/5 * * * *"
   workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
   check:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Comprobar web
+      - name: Descargar repositorio
+        uses: actions/checkout@v4
+
+      - name: Comprobar nuevas fechas
+        env:
+          PYTHONUNBUFFERED: "1"
         run: |
-          python - <<'PY'
-          import requests
-          from bs4 import BeautifulSoup
-          from pathlib import Path
+          python3 <<'PY'
           import re
+          import html
+          import requests
+          from urllib.parse import urljoin
 
           URL = "https://entradas.7yaccion.com/"
 
@@ -27,36 +35,53 @@ jobs:
           )
           r.raise_for_status()
 
-          soup = BeautifulSoup(r.text, "html.parser")
+          page = r.text
 
-          # Extraer enlaces de eventos
-          eventos = []
-
-          for a in soup.find_all("a", href=True):
-              href = a["href"]
-              texto = " ".join(a.stripped_strings)
-
-              if "/evento/" in href.lower():
-                  eventos.append((texto, href))
-
-          eventos = sorted(set(eventos))
-
-          actual = "\n".join(
-              f"{texto} | {href}"
-              for texto, href in eventos
+          pattern = re.compile(
+              r'<a[^>]+href=["\']([^"\']*?/evento/[^"\']*)["\'][^>]*>(.*?)</a>',
+              re.I | re.S
           )
 
-          archivo = Path("eventos_actuales.txt")
+          eventos = set()
 
-          anterior = archivo.read_text() if archivo.exists() else ""
+          for href, contenido in pattern.findall(page):
+              href = urljoin(URL, html.unescape(href))
+              texto = re.sub(r"<[^>]+>", " ", contenido)
+              texto = html.unescape(texto)
+              texto = " ".join(texto.split())
 
-          if actual != anterior:
-              print("CAMBIO DETECTADO")
-              print(actual)
+              eventos.add(f"{texto}|{href}")
 
-              archivo.write_text(actual)
+          eventos = sorted(eventos)
 
-              # Aquí posteriormente añadiremos Telegram
-          else:
-              print("Sin cambios.")
+          archivo = "eventos_conocidos.txt"
+
+          try:
+              with open(archivo, "r", encoding="utf-8") as f:
+                  conocidos = set(x.strip() for x in f if x.strip())
+          except FileNotFoundError:
+              conocidos = set()
+
+          actuales = set(eventos)
+          nuevas = actuales - conocidos
+
+          print(f"Eventos encontrados: {len(actuales)}")
+          print(f"Eventos nuevos: {len(nuevas)}")
+
+          if nuevas:
+              print("NUEVAS FECHAS DETECTADAS:")
+              for evento in sorted(nuevas):
+                  print(evento)
+
+          with open(archivo, "w", encoding="utf-8") as f:
+              for evento in sorted(actuales):
+                  f.write(evento + "\n")
           PY
+
+      - name: Guardar estado
+        run: |
+          git config user.name "Hormiguero Monitor"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add eventos_conocidos.txt
+          git diff --cached --quiet || git commit -m "Actualizar fechas conocidas"
+          git push
