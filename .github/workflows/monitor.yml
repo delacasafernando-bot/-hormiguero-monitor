@@ -1,0 +1,62 @@
+name: Monitor El Hormiguero
+
+on:
+  schedule:
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Comprobar web
+        run: |
+          python - <<'PY'
+          import requests
+          from bs4 import BeautifulSoup
+          from pathlib import Path
+          import re
+
+          URL = "https://entradas.7yaccion.com/"
+
+          r = requests.get(
+              URL,
+              headers={"User-Agent": "Mozilla/5.0"},
+              timeout=30
+          )
+          r.raise_for_status()
+
+          soup = BeautifulSoup(r.text, "html.parser")
+
+          # Extraer enlaces de eventos
+          eventos = []
+
+          for a in soup.find_all("a", href=True):
+              href = a["href"]
+              texto = " ".join(a.stripped_strings)
+
+              if "/evento/" in href.lower():
+                  eventos.append((texto, href))
+
+          eventos = sorted(set(eventos))
+
+          actual = "\n".join(
+              f"{texto} | {href}"
+              for texto, href in eventos
+          )
+
+          archivo = Path("eventos_actuales.txt")
+
+          anterior = archivo.read_text() if archivo.exists() else ""
+
+          if actual != anterior:
+              print("CAMBIO DETECTADO")
+              print(actual)
+
+              archivo.write_text(actual)
+
+              # Aquí posteriormente añadiremos Telegram
+          else:
+              print("Sin cambios.")
+          PY
